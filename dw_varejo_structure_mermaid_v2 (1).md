@@ -12,13 +12,13 @@ flowchart LR
   classDef fact fill:#f97316,stroke:#ea580c,color:#fff,stroke-width:1px;
   classDef dim  fill:#0ea5e9,stroke:#0369a1,color:#fff,stroke-width:1px;
 
-  DT["DIM_TEMPO\n(sk_tempo)\n• data_completa\n• ano/mês/dia\n• trimestre"]:::dim
+  DT["DIM_TEMPO\n(sk_tempo)\n• data_completa\n• ano/mês/trimestre\n• dia_semana"]:::dim
   DP["DIM_PRODUTO\n(sk_produto)\n• descrição\n• categoria\n• tipo_produto"]:::dim
-  DFN["DIM_FUNCIONARIO\n(sk_funcionario)\n• nome\n• cargo_atual\n• comissão_%"]:::dim
-  DC["DIM_CLIENTE\n(sk_cliente)\n• nome\n• possui_login\n• cliente_antigo"]:::dim
-  DL["DIM_LOCALIDADE\n(sk_localidade)\n• tipo_loja\n• cidade/estado\n• eh_matriz"]:::dim
+  DFN["DIM_FUNCIONARIO\n(sk_funcionario)\n• nome\n• cargo_atual"]:::dim
+  DC["DIM_CLIENTE\n(sk_cliente)\n• nome\n• cpf"]:::dim
+  DL["DIM_LOCALIDADE\n(sk_localidade)\n• tipo_loja\n• regiao"]:::dim
 
-  FV["FATO_VENDAS\n(sk_venda)\n\nMétricas:\n• quantidade\n• valor_unitário\n• valor_total\n• valor_desconto\n• valor_comissão"]:::fact
+  FV["FATO_VENDAS\n(sk_venda)\n\nMétricas:\n• quantidade_vendida\n• valor_total\n• numero_atendimento"]:::fact
 
   DT --> FV
   DP --> FV
@@ -50,12 +50,8 @@ erDiagram
     int      trimestre
     int      mes
     string   nome_mes
-    int      semana_ano
-    int      dia
     int      dia_semana
     string   nome_dia_semana
-    boolean  eh_fim_semana
-    boolean  eh_feriado
   }
 
   DIM_PRODUTO {
@@ -64,10 +60,6 @@ erDiagram
     string   descricao_produto
     string   categoria
     string   tipo_produto
-    decimal  valor_sugerido
-    date     data_inicio
-    date     data_fim
-    boolean  versao_atual
   }
 
   DIM_FUNCIONARIO {
@@ -75,44 +67,19 @@ erDiagram
     int      nk_matricula
     string   nome_funcionario
     string   cargo_atual
-    string   status
-    date     data_contratacao
-    date     data_demissao
-    decimal  salario_base
-    decimal  comissao_percentual
-    date     data_inicio
-    date     data_fim
-    boolean  versao_atual
   }
 
   DIM_CLIENTE {
     int      sk_cliente PK
     long     nk_cpf
     string   nome_cliente
-    string   telefone_residencial
-    string   telefone_celular
-    boolean  possui_login
-    date     data_cadastro_login
-    boolean  cliente_antigo
-    date     data_inicio
-    date     data_fim
-    boolean  versao_atual
   }
 
   DIM_LOCALIDADE {
     int      sk_localidade PK
     int      nk_loja
     string   tipo_loja
-    string   cnpj
-    string   cidade
-    string   estado
-    string   nome_estado
-    string   bairro
     string   regiao
-    boolean  eh_matriz
-    date     data_inicio
-    date     data_fim
-    boolean  versao_atual
   }
 
   FATO_VENDAS {
@@ -123,12 +90,8 @@ erDiagram
     int      sk_cliente FK
     int      sk_localidade FK
     int      quantidade_vendida
-    decimal  valor_unitario
     decimal  valor_total
-    decimal  valor_desconto
-    decimal  valor_comissao
     int      numero_atendimento
-    timestamp data_carga
   }
 ```
 
@@ -144,19 +107,19 @@ flowchart LR
   classDef dw  fill:#dcfce7,stroke:#22c55e,color:#052e16;
 
   subgraph ORIGEM["CAMADA DE ORIGEM\n(PostgreSQL: varejo_bdiii)"]
-    O1["VENDA\n tb010_012_vendas"]:::src
+    O1["VENDAS\n tb010_012_vendas"]:::src
     O2["PRODUTOS\n tb012_produtos / tb013_categorias"]:::src
     O3["FUNCIONÁRIOS\n tb005 / tb006"]:::src
-    O4["CLIENTES & LOGINS\n tb010 / tb011"]:::src
-    O5["LOJAS & ENDEREÇOS\n tb004 / tb003"]:::src
+    O4["CLIENTES\n tb010_clientes"]:::src
+    O5["LOJAS & ENDEREÇOS\n tb004 / tb003 / tb002 / tb001"]:::src
   end
 
   subgraph STAGING["STAGING (staging_varejo)"]
-    S1["stg_vendas\n• validação • limpeza • flags"]:::stg
-    S2["stg_produtos\n• join categorias • tipo"]:::stg
-    S3["stg_funcionarios\n• cargo atual • comissão"]:::stg
-    S4["stg_clientes\n• flag login • antigo"]:::stg
-    S5["stg_localidades\n• endereço • matriz/filial"]:::stg
+    S1["stg_vendas\n• valor_total calculado"]:::stg
+    S2["stg_produtos\n• tipo_produto derivado"]:::stg
+    S3["stg_funcionarios\n• cargo atual"]:::stg
+    S4["stg_clientes\n• dados básicos"]:::stg
+    S5["stg_localidades\n• região calculada"]:::stg
   end
 
   subgraph DW["DATA WAREHOUSE (dw_varejo)"]
@@ -165,7 +128,7 @@ flowchart LR
     D3["dim_funcionario"]:::dw
     D4["dim_cliente"]:::dw
     D5["dim_localidade"]:::dw
-    DF["fato_vendas\ncarga diária"]:::dw
+    DF["fato_vendas\ncarga única"]:::dw
   end
 
   O1 --> S1 --> DF
@@ -185,11 +148,14 @@ flowchart LR
 
 | Campo | Tipo | Observação |
 |---|---|---|
-| sk_tempo | INTEGER | PK (surrogate) |
-| data_completa | DATE | not null |
-| ano, trimestre, mes, semana_ano, dia, dia_semana | INTEGER | hierarquia de tempo |
-| nome_mes, nome_dia_semana | VARCHAR(20) | textos |
-| eh_fim_semana, eh_feriado | BOOLEAN | flags |
+| sk_tempo | SERIAL | PK (surrogate) |
+| data_completa | DATE | not null, unique |
+| ano | INTEGER | not null |
+| trimestre | INTEGER | not null (1-4) |
+| mes | INTEGER | not null (1-12) |
+| nome_mes | VARCHAR(20) | not null |
+| dia_semana | INTEGER | not null (0-6, 0=Domingo) |
+| nome_dia_semana | VARCHAR(20) | not null |
 </details>
 
 <details>
@@ -197,12 +163,11 @@ flowchart LR
 
 | Campo | Tipo | Observação |
 |---|---|---|
-| sk_produto | INTEGER | PK |
-| nk_produto | INTEGER | NK |
-| descricao_produto, categoria, tipo_produto | VARCHAR | not null |
-| valor_sugerido | NUMERIC(10,2) |  |
-| data_inicio, data_fim | DATE | SCD2 |
-| versao_atual | BOOLEAN | default true |
+| sk_produto | SERIAL | PK |
+| nk_produto | INTEGER | NK - código original |
+| descricao_produto | VARCHAR(255) | not null |
+| categoria | VARCHAR(255) | not null |
+| tipo_produto | VARCHAR(100) | not null - derivado da categoria |
 </details>
 
 <details>
@@ -210,13 +175,10 @@ flowchart LR
 
 | Campo | Tipo | Observação |
 |---|---|---|
-| sk_funcionario | INTEGER | PK |
-| nk_matricula | INTEGER | NK |
-| nome_funcionario, cargo_atual | VARCHAR |  |
-| status | VARCHAR(20) | Ativo/Inativo |
-| data_contratacao, data_demissao | DATE |  |
-| salario_base, comissao_percentual | NUMERIC |  |
-| data_inicio, data_fim, versao_atual | DATE/BOOLEAN | SCD2 |
+| sk_funcionario | SERIAL | PK |
+| nk_matricula | INTEGER | NK - matrícula |
+| nome_funcionario | VARCHAR(255) | not null |
+| cargo_atual | VARCHAR(255) | not null |
 </details>
 
 <details>
@@ -224,12 +186,9 @@ flowchart LR
 
 | Campo | Tipo | Observação |
 |---|---|---|
-| sk_cliente | INTEGER | PK |
-| nk_cpf | BIGINT | NK |
-| nome + telefones | VARCHAR |  |
-| possui_login, cliente_antigo | BOOLEAN |  |
-| data_cadastro_login | DATE | se houver login |
-| data_inicio, data_fim, versao_atual | DATE/BOOLEAN | SCD2 |
+| sk_cliente | SERIAL | PK |
+| nk_cpf | BIGINT | NK - CPF |
+| nome_cliente | VARCHAR(255) | not null |
 </details>
 
 <details>
@@ -237,11 +196,10 @@ flowchart LR
 
 | Campo | Tipo | Observação |
 |---|---|---|
-| sk_localidade | INTEGER | PK |
-| nk_loja | INTEGER | NK |
-| tipo_loja, cnpj, cidade, estado, nome_estado, bairro, regiao | VARCHAR |  |
-| eh_matriz | BOOLEAN |  |
-| data_inicio, data_fim, versao_atual | DATE/BOOLEAN | SCD2 |
+| sk_localidade | SERIAL | PK |
+| nk_loja | INTEGER | NK - código da loja |
+| tipo_loja | VARCHAR(50) | not null - Matriz/Filial |
+| regiao | VARCHAR(50) | not null - Norte/Sul/Sudeste/etc |
 </details>
 
 <details>
@@ -250,10 +208,81 @@ flowchart LR
 | Campo | Tipo | Observação |
 |---|---|---|
 | sk_venda | SERIAL | PK |
-| sk_tempo / sk_produto / sk_funcionario / sk_cliente / sk_localidade | INTEGER | FKs |
-| quantidade_vendida, valor_unitario, valor_total, valor_desconto, valor_comissao | NUMERIC | métricas |
-| numero_atendimento | INTEGER |  |
-| data_carga | TIMESTAMP | default now() |
+| sk_tempo | INTEGER | FK para dim_tempo |
+| sk_produto | INTEGER | FK para dim_produto |
+| sk_funcionario | INTEGER | FK para dim_funcionario |
+| sk_cliente | INTEGER | FK para dim_cliente |
+| sk_localidade | INTEGER | FK para dim_localidade |
+| quantidade_vendida | INTEGER | not null |
+| valor_total | NUMERIC(10,2) | not null - calculado |
+| numero_atendimento | INTEGER | not null |
 </details>
 
 ---
+
+## 📊 Perguntas da Análise Gerencial
+
+O DW foi projetado especificamente para responder estas 6 perguntas:
+
+### ✅ Perguntas Atendidas:
+1. **Quantidade de vendas agrupada por tipo e categoria**
+   - Utiliza: `dim_produto` (tipo_produto, categoria) + `fato_vendas`
+   
+2. **Valor das vendas por funcionário, permitindo uma visão hierárquica por tempo**
+   - Utiliza: `dim_funcionario` + `dim_tempo` (ano, trimestre, mes) + `fato_vendas`
+   
+3. **Volume das vendas por funcionário**
+   - Utiliza: `dim_funcionario` + `fato_vendas` (quantidade_vendida)
+   
+4. **Quantidade de atendimentos realizados por funcionário e localidade**
+   - Utiliza: `dim_funcionario` + `dim_localidade` + `fato_vendas` (numero_atendimento)
+   
+5. **Valor das últimas vendas realizadas por cliente**
+   - Utiliza: `dim_cliente` + `dim_tempo` + `fato_vendas` com window functions
+
+### ❌ Pergunta Não Atendida:
+6. **Clientes que mais compraram na loja virtual com valor acumulado por período**
+   - **RESPOSTA**: Não existe loja virtual no sistema atual
+   - **ALTERNATIVA**: Query mostra dados de lojas físicas (Matriz/Filiais)
+
+---
+
+## 🎯 Características do DW Implementado
+
+### ✅ Decisões de Design:
+- **Estrutura simplificada**: Apenas campos necessários para as 6 perguntas
+- **Star Schema puro**: Modelo dimensional clássico
+- **Métrica única de valor**: Apenas `valor_total` (qtd × valor_unitário)
+- **Localidade por região**: Agrupamento geográfico simplificado
+- **Sem SCD**: Dimensões simples sem controle de histórico
+- **Sem índices desnecessários**: Apenas FKs obrigatórias
+- **ETL direto**: Carga única sem complexidade excessiva
+
+### 🔧 Limitações Conhecidas:
+- **Localidade única por venda**: Como `tb010_012_vendas` não tem `tb004_cod_loja`, todas as vendas são associadas à primeira loja disponível
+- **Ausência de loja virtual**: Sistema atual possui apenas lojas físicas
+- **Sem dados históricos de mudanças**: Dimensões capturam apenas estado atual
+
+### 📝 Scripts de Implementação:
+1. `01_criacao_tabelas_dimensao.sql` - Cria todas as dimensões
+2. `02_criacao_tabela_fato.sql` - Cria tabela fato com FKs
+3. `03_criacao_tabelas_staging.sql` - Cria área de staging
+4. `04_etl_dimensoes.sql` - Popula todas as dimensões
+5. `05_etl_fato_vendas.sql` - Popula fato com lookups
+6. `06_queries_analise_gerencial.sql` - Queries para as 6 perguntas
+7. `00_executar_todos_scripts.sql` - Execução automatizada
+
+---
+
+## 🚀 Execução
+
+Para criar o DW completo:
+```sql
+\c dw_varejo
+\i 00_executar_todos_scripts.sql
+```
+
+Para executar as análises:
+```sql
+\i 06_queries_analise_gerencial.sql
+```
